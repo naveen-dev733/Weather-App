@@ -6,6 +6,17 @@ class PremiumWeatherApp {
         this.uvIndex = null;
         this.settings = this.loadSettings();
         this.lottieAnimations = {};
+        
+        // ✅ NEW: COMFORT LEVELS DATA
+        this.comfortLevels = {
+            extreme_cold: { min: -50, max: 0, text: "Freezing", color: "#4fc3f7" },
+            cold: { min: 0, max: 15, text: "Cold", color: "#81d4fa" },
+            mild: { min: 15, max: 25, text: "Pleasant", color: "#4caf50" },
+            warm: { min: 25, max: 35, text: "Warm", color: "#ffb74d" },
+            hot: { min: 35, max: 45, text: "Hot", color: "#ff7043" },
+            extreme_hot: { min: 45, max: Infinity, text: "Extreme Heat", color: "#c62828" }
+        };
+        
         this.loadingMessages = [
             '☀️ Fetching weather...',
             '🌤️ Almost there...',
@@ -347,7 +358,7 @@ class PremiumWeatherApp {
         $('#temp-low').text(`${Math.round(tempLow)}°`);
         $('#description').text(weather.weather[0].main);
         
-        // Feels Like with Comfort Level
+        // ✅ UPDATED: Feels Like with New Comfort Level from Constructor Data
         const comfort = this.getComfortLevel(temp);
         $('#feels-like').html(`
             Feels like <strong>${Math.round(feelsLike)}°${tempUnit}</strong> 
@@ -456,14 +467,16 @@ class PremiumWeatherApp {
         }
     }
 
+    // ✅ NEW: UPDATED getComfortLevel() using constructor data
     getComfortLevel(temp) {
-        const levels = Object.values(COMFORT_LEVELS).reverse();
-        for (let level of levels) {
-            if (temp >= level.min) {
+        // Loop through comfort levels to find matching range
+        for (const [key, level] of Object.entries(this.comfortLevels)) {
+            if (temp >= level.min && temp < level.max) {
                 return level;
             }
         }
-        return COMFORT_LEVELS.extreme_cold;
+        // Fallback for extreme temperatures
+        return this.comfortLevels.extreme_hot;
     }
 
     getWindDirection(degrees) {
@@ -604,14 +617,17 @@ class PremiumWeatherApp {
         const tempUnit = this.getTempUnit();
         let html = '';
 
-        // HEAT WARNING
-        if (temp > 40) {
+        // ✅ UPDATED: Using comfort levels from constructor for heat warning
+        const comfort = this.getComfortLevel(temp);
+        
+        // HEAT WARNING - based on comfort level
+        if (comfort.text === 'Extreme Heat' || comfort.text === 'Hot') {
             html += `
                 <div class="notification-card heat animate__animated animate__slideInDown">
                     <i class="fas fa-fire"></i>
                     <div>
-                        <strong>🔥 Extreme Heat Warning</strong>
-                        <p>Temperature exceeds 40°${tempUnit}. Stay hydrated!</p>
+                        <strong>🔥 ${comfort.text}</strong>
+                        <p style="color: ${comfort.color};">Temperature is ${comfort.text.toLowerCase()}. Stay safe!</p>
                     </div>
                 </div>
             `;
@@ -626,6 +642,19 @@ class PremiumWeatherApp {
                     <div>
                         <strong>☔ Rain Expected</strong>
                         <p>Carry an umbrella before going out</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ✅ NEW: COLD WARNING - based on comfort level
+        if (comfort.text === 'Freezing' || comfort.text === 'Cold') {
+            html += `
+                <div class="notification-card cold animate__animated animate__slideInDown">
+                    <i class="fas fa-snowflake"></i>
+                    <div>
+                        <strong>❄️ ${comfort.text}</strong>
+                        <p style="color: ${comfort.color};">Bundle up! It's ${comfort.text.toLowerCase()}.</p>
                     </div>
                 </div>
             `;

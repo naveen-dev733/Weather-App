@@ -1823,3 +1823,19 @@ input:checked + .slider:before {
         gap: 10px;
     }
 }
+/* Update this in style.css */
+.suggestion-item {
+    padding: 12px 20px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-color);
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 14px;
+}
+
+.suggestion-text {
+    font-weight: 500;
+    color: var(--text-dark);
+}
