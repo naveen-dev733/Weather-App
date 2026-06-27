@@ -6,8 +6,9 @@ class PremiumWeatherApp {
         this.uvIndex = null;
         this.settings = this.loadSettings();
         this.lottieAnimations = {};
+        this.suggestionTimeout = null; // ✅ Added for debouncing
         
-        // ✅ NEW: COMFORT LEVELS DATA
+        // ✅ COMFORT LEVELS DATA
         this.comfortLevels = {
             extreme_cold: { min: -50, max: 0, text: "Freezing", color: "#4fc3f7" },
             cold: { min: 0, max: 15, text: "Cold", color: "#81d4fa" },
@@ -117,39 +118,79 @@ class PremiumWeatherApp {
         }
     }
 
+    // ✅ REPLACED: Search Input with Debouncing
     handleSearchInput(e) {
         const input = $(e.target).val().trim();
-        if (input.length > 1) {
-            this.showSuggestions(input);
-            $('#recent-searches').addClass('hidden');
-        } else {
-            $('#search-suggestions').addClass('hidden');
-        }
-    }
 
-    showSuggestions(input) {
-        const filtered = SUGGESTION_CITIES.filter(city =>
-            city.toLowerCase().startsWith(input.toLowerCase())
-        );
+        clearTimeout(this.suggestionTimeout);
 
-        if (filtered.length === 0) {
+        if (input.length < 2) {
             $('#search-suggestions').addClass('hidden');
             return;
         }
 
-        const html = filtered.map(city => `
-            <div class="suggestion-item" data-city="${city}">
+        // debounce (prevents too many API calls while typing)
+        this.suggestionTimeout = setTimeout(() => {
+            this.showSuggestions(input);
+        }, 300);
+    }
+
+    // ✅ NEW: Fetch City Suggestions from API
+    async fetchCitySuggestions(query) {
+        if (!query || query.length < 2) return [];
+
+        try {
+            // Using absolute URL to prevent baseUrl issue
+            const res = await fetch(
+                `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(query)}&limit=5&appid=${API_CONFIG.apiKey}`
+            );
+
+            const data = await res.json();
+
+            return data.map(place => {
+                const stateText = place.state ? `${place.state}, ` : "";
+                return {
+                    name: place.name,
+                    state: place.state || "",
+                    country: place.country,
+                    // Formats as: "Tirupati, Andhra Pradesh, IN"
+                    fullName: `${place.name}, ${stateText}${place.country}`
+                };
+            });
+
+        } catch (err) {
+            console.error("Autocomplete error:", err);
+            return [];
+        }
+    }
+
+    // ✅ REPLACED: Show Suggestions dynamically
+    async showSuggestions(input) {
+        const suggestions = await this.fetchCitySuggestions(input);
+
+        if (!suggestions.length) {
+            $('#search-suggestions').addClass('hidden');
+            return;
+        }
+
+        const html = suggestions.map(city => `
+            <div class="suggestion-item" data-city="${city.fullName}">
                 <i class="fas fa-map-pin"></i>
-                <span>${city}</span>
+                <span class="suggestion-text">${city.fullName}</span>
             </div>
         `).join('');
 
-        $('#search-suggestions').html(html).removeClass('hidden');
+        $('#search-suggestions')
+            .html(html)
+            .removeClass('hidden');
 
+        // Click handler for suggestions
         $('#search-suggestions .suggestion-item').on('click', (e) => {
             const city = $(e.currentTarget).data('city');
+
             this.addToRecentSearches(city);
             this.getWeatherByCity(city);
+
             $('#city-input').val('');
             $('#search-suggestions').addClass('hidden');
         });
@@ -263,39 +304,58 @@ class PremiumWeatherApp {
         }
     }
 
+    // ✅ REPLACED: Updated to use Geo API first (Fixes small towns like Kedarnath)
     async getWeatherByCity(city) {
         this.showLoading(true, this.getRandomLoadingMessage());
-        
+
         try {
-            const response = await fetch(
-                `${API_CONFIG.baseUrl}/weather?q=${city}&appid=${API_CONFIG.apiKey}&units=${API_CONFIG.units}`
+            // GEO API FIRST 
+            const geoRes = await fetch(
+                `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(city)}&limit=1&appid=${API_CONFIG.apiKey}`
             );
 
-            if (!response.ok) {
-                throw new Error('City not found');
+            const geoData = await geoRes.json();
+
+            if (!geoData || !geoData.length) {
+                throw new Error("Location not found");
             }
 
-            const data = await response.json();
+            const { lat, lon, name, country } = geoData[0];
+
+            const weatherRes = await fetch(
+                `${API_CONFIG.baseUrl}/weather?lat=${lat}&lon=${lon}&appid=${API_CONFIG.apiKey}&units=${API_CONFIG.units}`
+            );
+
+            if (!weatherRes.ok) {
+                throw new Error("Weather data not found");
+            }
+
+            const data = await weatherRes.json();
+            
+            // Override name to ensure beautiful capitalization from GEO Api
+            data.name = name; 
+            data.sys.country = country;
+            
             this.currentWeather = data;
-            
+
             await Promise.all([
-                this.getForecastData(data.coord.lat, data.coord.lon),
-                this.getAirQualityData(data.coord.lat, data.coord.lon),
-                this.getUVIndexData(data.coord.lat, data.coord.lon)
+                this.getForecastData(lat, lon),
+                this.getAirQualityData(lat, lon),
+                this.getUVIndexData(lat, lon)
             ]);
-            
+
             this.updateWeatherDisplay();
             this.updateForecastDisplay();
             this.updateNotifications();
             this.setWeatherBackground();
+
             this.hideError();
             this.showLoading(false);
-            
-            console.log('✅ Weather loaded for:', city);
+
         } catch (error) {
-            this.showError('❌ City Not Found', `"${city}" is not a valid city. Please try again.`);
+            console.error(error);
+            this.showError("City Not Found", `"${city}" not found`);
             this.showLoading(false);
-            console.error('Error:', error);
         }
     }
 
@@ -358,7 +418,7 @@ class PremiumWeatherApp {
         $('#temp-low').text(`${Math.round(tempLow)}°`);
         $('#description').text(weather.weather[0].main);
         
-        // ✅ UPDATED: Feels Like with New Comfort Level from Constructor Data
+        // COMFORT LEVEL
         const comfort = this.getComfortLevel(temp);
         $('#feels-like').html(`
             Feels like <strong>${Math.round(feelsLike)}°${tempUnit}</strong> 
@@ -467,15 +527,12 @@ class PremiumWeatherApp {
         }
     }
 
-    // ✅ NEW: UPDATED getComfortLevel() using constructor data
     getComfortLevel(temp) {
-        // Loop through comfort levels to find matching range
         for (const [key, level] of Object.entries(this.comfortLevels)) {
             if (temp >= level.min && temp < level.max) {
                 return level;
             }
         }
-        // Fallback for extreme temperatures
         return this.comfortLevels.extreme_hot;
     }
 
@@ -614,13 +671,10 @@ class PremiumWeatherApp {
 
     updateNotifications() {
         const temp = this.currentWeather.main.temp;
-        const tempUnit = this.getTempUnit();
         let html = '';
 
-        // ✅ UPDATED: Using comfort levels from constructor for heat warning
         const comfort = this.getComfortLevel(temp);
         
-        // HEAT WARNING - based on comfort level
         if (comfort.text === 'Extreme Heat' || comfort.text === 'Hot') {
             html += `
                 <div class="notification-card heat animate__animated animate__slideInDown">
@@ -633,7 +687,6 @@ class PremiumWeatherApp {
             `;
         }
 
-        // RAIN WARNING
         const rainChance = this.forecastData?.list[0].pop || 0;
         if (rainChance > 0.5) {
             html += `
@@ -647,7 +700,6 @@ class PremiumWeatherApp {
             `;
         }
 
-        // ✅ NEW: COLD WARNING - based on comfort level
         if (comfort.text === 'Freezing' || comfort.text === 'Cold') {
             html += `
                 <div class="notification-card cold animate__animated animate__slideInDown">
@@ -662,7 +714,6 @@ class PremiumWeatherApp {
 
         $('#notifications-row').html(html);
 
-        // Update notification badge
         const count = html.match(/notification-card/g)?.length || 0;
         $('.notification-badge').text(count);
     }
@@ -733,7 +784,6 @@ class PremiumWeatherApp {
             return;
         }
 
-        // Load favorite cities data (simplified - just show names)
         const html = favorites.map(city => `
             <div class="favorite-item" data-city="${city}">
                 <div class="favorite-star">
@@ -747,7 +797,6 @@ class PremiumWeatherApp {
 
         $('#favorites-list').html(html);
 
-        // Click to view favorite city
         $(document).on('click', '.favorite-item', (e) => {
             if (!$(e.target).closest('.favorite-star').length) {
                 const city = $(e.currentTarget).data('city');
@@ -857,7 +906,6 @@ class PremiumWeatherApp {
         $('#error-message').text(message);
         $('#error-card').removeClass('hidden');
         
-        // Auto-hide after 6 seconds
         setTimeout(() => this.hideError(), 6000);
     }
 
