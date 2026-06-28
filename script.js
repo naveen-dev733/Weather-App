@@ -6,9 +6,9 @@ class PremiumWeatherApp {
         this.uvIndex = null;
         this.settings = this.loadSettings();
         this.lottieAnimations = {};
-        this.suggestionTimeout = null; // ✅ Added for debouncing
+        this.suggestionTimeout = null; // ✅ For debouncing auto-search
         
-        // ✅ COMFORT LEVELS DATA
+        // COMFORT LEVELS DATA
         this.comfortLevels = {
             extreme_cold: { min: -50, max: 0, text: "Freezing", color: "#4fc3f7" },
             cold: { min: 0, max: 15, text: "Cold", color: "#81d4fa" },
@@ -53,7 +53,7 @@ class PremiumWeatherApp {
         // RECENT SEARCHES
         $(document).on('click', '#clear-recent', () => this.clearRecentSearches());
 
-        // LOCATION
+        // LOCATION (Geo Location Button)
         $('#location-btn').on('click', () => this.getCurrentLocation());
 
         // NAVIGATION
@@ -118,7 +118,7 @@ class PremiumWeatherApp {
         }
     }
 
-    // ✅ REPLACED: Search Input with Debouncing
+    // ✅ UPDATED: Auto Search Input with Debouncing
     handleSearchInput(e) {
         const input = $(e.target).val().trim();
 
@@ -135,12 +135,11 @@ class PremiumWeatherApp {
         }, 300);
     }
 
-    // ✅ NEW: Fetch City Suggestions from API
+    // ✅ NEW: Fetch Auto Search Suggestions dynamically from API
     async fetchCitySuggestions(query) {
         if (!query || query.length < 2) return [];
 
         try {
-            // Using absolute URL to prevent baseUrl issue
             const res = await fetch(
                 `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(query)}&limit=5&appid=${API_CONFIG.apiKey}`
             );
@@ -151,9 +150,9 @@ class PremiumWeatherApp {
                 const stateText = place.state ? `${place.state}, ` : "";
                 return {
                     name: place.name,
-                    state: place.state || "",
-                    country: place.country,
-                    // Formats as: "Tirupati, Andhra Pradesh, IN"
+                    lat: place.lat,
+                    lon: place.lon,
+                    // Formats to: "Tirupati, Andhra Pradesh, IN"
                     fullName: `${place.name}, ${stateText}${place.country}`
                 };
             });
@@ -164,7 +163,7 @@ class PremiumWeatherApp {
         }
     }
 
-    // ✅ REPLACED: Show Suggestions dynamically
+    // ✅ UPDATED: Display Auto Search Suggestions
     async showSuggestions(input) {
         const suggestions = await this.fetchCitySuggestions(input);
 
@@ -174,7 +173,7 @@ class PremiumWeatherApp {
         }
 
         const html = suggestions.map(city => `
-            <div class="suggestion-item" data-city="${city.fullName}">
+            <div class="suggestion-item" data-city="${city.name}" data-fullname="${city.fullName}" data-lat="${city.lat}" data-lon="${city.lon}">
                 <i class="fas fa-map-pin"></i>
                 <span class="suggestion-text">${city.fullName}</span>
             </div>
@@ -184,12 +183,19 @@ class PremiumWeatherApp {
             .html(html)
             .removeClass('hidden');
 
-        // Click handler for suggestions
+        // Click handler for selected suggestion
         $('#search-suggestions .suggestion-item').on('click', (e) => {
-            const city = $(e.currentTarget).data('city');
+            const $item = $(e.currentTarget);
+            const cityName = $item.data('city');
+            const fullName = $item.data('fullname');
+            const lat = $item.data('lat');
+            const lon = $item.data('lon');
 
-            this.addToRecentSearches(city);
-            this.getWeatherByCity(city);
+            // Save the beautifully formatted name to recent searches
+            this.addToRecentSearches(fullName);
+            
+            // Fetch weather using exact coordinates from the suggestion for perfect accuracy!
+            this.getWeatherByCoordinates(lat, lon, cityName, fullName.split(',').pop().trim());
 
             $('#city-input').val('');
             $('#search-suggestions').addClass('hidden');
@@ -221,8 +227,11 @@ class PremiumWeatherApp {
         $('#recent-searches').html(html).removeClass('hidden');
 
         $('#recent-searches .recent-item').on('click', (e) => {
-            const city = $(e.currentTarget).data('city');
-            this.getWeatherByCity(city);
+            // When clicking a recent search, we extract just the city name part before the first comma
+            const fullText = $(e.currentTarget).data('city');
+            const cityNameOnly = fullText.split(',')[0].trim();
+            
+            this.getWeatherByCity(cityNameOnly);
             $('#city-input').val('');
             $('#recent-searches').addClass('hidden');
         });
@@ -248,6 +257,7 @@ class PremiumWeatherApp {
         console.log('📚 Recent Searches Loaded:', recent);
     }
 
+    // ✅ GEO LOCATION FEATURE
     getCurrentLocation() {
         if (!navigator.geolocation) {
             this.showError('❌ Geolocation Unavailable', 'Your browser does not support geolocation');
@@ -260,6 +270,7 @@ class PremiumWeatherApp {
             (position) => {
                 const { latitude, longitude } = position.coords;
                 console.log('✅ Location Found:', latitude, longitude);
+                // Call Weather API using exact GPS Coordinates
                 this.getWeatherByCoordinates(latitude, longitude);
             },
             (error) => {
@@ -278,12 +289,19 @@ class PremiumWeatherApp {
         );
     }
 
-    async getWeatherByCoordinates(lat, lon) {
+    // ✅ FETCH BY COORDINATES (Used by Geo Location & Auto-search clicks)
+    async getWeatherByCoordinates(lat, lon, overrideName = null, overrideCountry = null) {
+        this.showLoading(true, '📍 Finding data...');
         try {
             const response = await fetch(
                 `${API_CONFIG.baseUrl}/weather?lat=${lat}&lon=${lon}&appid=${API_CONFIG.apiKey}&units=${API_CONFIG.units}`
             );
             const data = await response.json();
+            
+            // Use exact name if passed from autocomplete
+            if (overrideName) data.name = overrideName;
+            if (overrideCountry) data.sys.country = overrideCountry;
+            
             this.currentWeather = data;
             
             await Promise.all([
@@ -304,12 +322,12 @@ class PremiumWeatherApp {
         }
     }
 
-    // ✅ REPLACED: Updated to use Geo API first (Fixes small towns like Kedarnath)
+    // ✅ UPDATED: Fetch By City Name using GEO API first for precise accuracy
     async getWeatherByCity(city) {
         this.showLoading(true, this.getRandomLoadingMessage());
 
         try {
-            // GEO API FIRST 
+            // GEO API FIRST (resolves small towns perfectly)
             const geoRes = await fetch(
                 `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(city)}&limit=1&appid=${API_CONFIG.apiKey}`
             );
@@ -322,6 +340,7 @@ class PremiumWeatherApp {
 
             const { lat, lon, name, country } = geoData[0];
 
+            // Now fetch weather using coordinates
             const weatherRes = await fetch(
                 `${API_CONFIG.baseUrl}/weather?lat=${lat}&lon=${lon}&appid=${API_CONFIG.apiKey}&units=${API_CONFIG.units}`
             );
@@ -332,8 +351,8 @@ class PremiumWeatherApp {
 
             const data = await weatherRes.json();
             
-            // Override name to ensure beautiful capitalization from GEO Api
-            data.name = name; 
+            // Assign true names from Geo API
+            data.name = name;
             data.sys.country = country;
             
             this.currentWeather = data;
@@ -418,7 +437,7 @@ class PremiumWeatherApp {
         $('#temp-low').text(`${Math.round(tempLow)}°`);
         $('#description').text(weather.weather[0].main);
         
-        // COMFORT LEVEL
+        // Comfort Level
         const comfort = this.getComfortLevel(temp);
         $('#feels-like').html(`
             Feels like <strong>${Math.round(feelsLike)}°${tempUnit}</strong> 
@@ -488,14 +507,9 @@ class PremiumWeatherApp {
                     path: LOTTIE_ANIMATIONS[animationType]
                 });
             } catch (e) {
-                // Fallback to emoji if Lottie fails
                 const emojis = {
-                    'sunny': '☀️',
-                    'cloudy': '☁️',
-                    'rainy': '🌧️',
-                    'stormy': '⛈️',
-                    'snowy': '❄️',
-                    'night': '🌙'
+                    'sunny': '☀️', 'cloudy': '☁️', 'rainy': '🌧️',
+                    'stormy': '⛈️', 'snowy': '❄️', 'night': '🌙'
                 };
                 container.innerHTML = `<span style="font-size: 100px;">${emojis[animationType]}</span>`;
             }
@@ -511,7 +525,6 @@ class PremiumWeatherApp {
         const currentHour = moment().hour();
         const isNight = currentHour < sunriseHour || currentHour > sunsetHour;
 
-        // Remove all weather classes
         $('body').removeClass('weather-sunny weather-cloudy weather-rainy weather-stormy weather-night');
 
         if (isNight) {
@@ -613,7 +626,6 @@ class PremiumWeatherApp {
 
         const forecasts = this.forecastData.list;
         
-        // HOURLY FORECAST
         const hourlyHTML = forecasts.slice(0, 8).map(forecast => {
             const time = moment(forecast.dt * 1000);
             const temp = this.convertTemp(forecast.main.temp);
@@ -634,7 +646,6 @@ class PremiumWeatherApp {
 
         $('#hourly-forecast').html(hourlyHTML);
 
-        // 7-DAY FORECAST
         const dailyForecasts = {};
         forecasts.forEach(forecast => {
             const day = moment(forecast.dt * 1000).format('YYYY-MM-DD');
@@ -737,7 +748,6 @@ class PremiumWeatherApp {
         $(sectionId).addClass('active');
     }
 
-    // FAVORITES FUNCTIONS
     addCurrentCityToFavorites() {
         if (!this.currentWeather) {
             this.showError('No City Selected', 'Please search for a city first');
@@ -809,7 +819,6 @@ class PremiumWeatherApp {
         });
     }
 
-    // CONVERSION FUNCTIONS
     convertTemp(temp) {
         if (this.settings.tempUnit === 'imperial') {
             return (temp * 9/5) + 32;
@@ -840,7 +849,6 @@ class PremiumWeatherApp {
         }
     }
 
-    // THEME FUNCTIONS
     toggleTheme() {
         $('body').toggleClass('dark-mode');
         const isDarkMode = $('body').hasClass('dark-mode');
@@ -866,7 +874,6 @@ class PremiumWeatherApp {
         return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
     }
 
-    // SETTINGS FUNCTIONS
     applySettings() {
         $('#temp-unit').val(this.settings.tempUnit);
         $('#wind-unit').val(this.settings.windUnit);
@@ -890,7 +897,6 @@ class PremiumWeatherApp {
         }
     }
 
-    // STORAGE FUNCTIONS
     saveSettings() {
         localStorage.setItem('weatherAppSettings', JSON.stringify(this.settings));
     }
@@ -900,7 +906,6 @@ class PremiumWeatherApp {
         return saved ? JSON.parse(saved) : { ...DEFAULT_SETTINGS };
     }
 
-    // UI FUNCTIONS
     showError(title, message) {
         $('#error-title').text(title);
         $('#error-message').text(message);
